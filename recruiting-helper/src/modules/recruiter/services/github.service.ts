@@ -16,14 +16,27 @@ export class GithubService {
 
       const data = response.data;
       
-      // We now fetch public repositories for projects
+      // Fetch up to 100 public repositories
       let projects: any[] = [];
       try {
-        const reposResponse = await axios.get(`https://api.github.com/users/${username}/repos?sort=updated&per_page=5`, {
+        const reposResponse = await axios.get(`https://api.github.com/users/${username}/repos?per_page=100`, {
           headers: { 'User-Agent': 'NitroStack-Recruiting-Helper' },
           timeout: 10000
         });
-        projects = reposResponse.data.map((repo: any) => ({
+        
+        const allRepos = reposResponse.data || [];
+        // Only keep original non-fork repositories
+        const nonForks = allRepos.filter((repo: any) => !repo.fork);
+        
+        // Sort by star count (highest first), then by last updated
+        nonForks.sort((a: any, b: any) => {
+          if (b.stargazers_count !== a.stargazers_count) {
+            return b.stargazers_count - a.stargazers_count;
+          }
+          return new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime();
+        });
+
+        projects = nonForks.map((repo: any) => ({
           name: repo.name,
           description: repo.description || '',
           url: repo.html_url,

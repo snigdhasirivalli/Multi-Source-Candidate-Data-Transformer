@@ -109,7 +109,8 @@ export class RecruiterTools {
       candidate_id: finalProfile.id,
       name: finalProfile.name,
       conflicts_found: finalProfile.conflicts.length,
-      message: `Successfully merged ${records.length} sources. You can view the full profile in the candidate_report resource.`
+      profile: finalProfile,
+      message: `Successfully merged ${records.length} sources into a unified candidate profile.`
     };
   }
 
@@ -133,84 +134,6 @@ export class RecruiterTools {
   }
 
   @Tool({
-    name: 'batch_evaluate_candidates',
-    description: 'Evaluate multiple candidates at once by passing their details as an array.',
-    inputSchema: z.object({
-      candidates: z.array(z.object({
-        candidate_id: z.string().describe('A unique identifier for the candidate (e.g. jdoe)'),
-        github_username: z.string().describe('GitHub username to fetch live data'),
-        portfolio_url: z.string().optional().describe('URL to their personal portfolio'),
-        resume_extracted_data: z.object({
-          name: z.string().optional(),
-          email: z.string().optional(),
-          phone: z.string().optional(),
-          location: z.string().optional(),
-          bio: z.string().optional(),
-          skills: z.array(z.string()).optional(),
-          links: z.array(z.string()).optional().describe('URLs or links found in resume, including LinkedIn profile URL, personal blog, portfolio links, etc.'),
-          experience: z.array(z.object({
-            company: z.string(),
-            title: z.string(),
-            duration: z.string(),
-            description: z.string()
-          })).optional(),
-          projects: z.array(z.object({
-            name: z.string(),
-            description: z.string().optional(),
-            url: z.string().optional(),
-            technologies: z.array(z.string()).optional()
-          })).optional()
-        }).optional().describe('Structured data that YOU (the AI) intelligently extracted from the uploaded resume text')
-      }))
-    })
-  })
-  async batchEvaluateCandidates(input: any, ctx: ExecutionContext) {
-    const results = [];
-    for (const cand of input.candidates) {
-      ctx.logger.info(`Batch processing candidate: ${cand.candidate_id}`);
-      try {
-        const res = await this.evaluateCandidate(cand, ctx);
-        results.push(res);
-      } catch (error: any) {
-        ctx.logger.error(`Error evaluating ${cand.candidate_id}: ${error.message}`);
-        results.push({
-          status: 'error',
-          candidate_id: cand.candidate_id,
-          message: error.message
-        });
-      }
-    }
-    return {
-      status: 'success',
-      processedCount: results.length,
-      results
-    };
-  }
-
-  @Tool({
-    name: 'get_all_candidates_reports',
-    description: 'Fetch all candidate reports currently saved in the outputs folder.',
-    inputSchema: z.object({})
-  })
-  async getAllCandidatesReports(input: any, ctx: ExecutionContext) {
-    const outputsDir = path.join(process.cwd(), 'outputs');
-    if (!fs.existsSync(outputsDir)) {
-      return { candidates: [] };
-    }
-    const files = fs.readdirSync(outputsDir).filter(f => f.endsWith('.json'));
-    const candidates = [];
-    for (const f of files) {
-      try {
-        const content = fs.readFileSync(path.join(outputsDir, f), 'utf8');
-        candidates.push(JSON.parse(content));
-      } catch (e: any) {
-        ctx.logger.error(`Error reading candidate file ${f}: ${e.message}`);
-      }
-    }
-    return { candidates };
-  }
-
-  @Tool({
     name: 'read_local_file',
     description: 'Read the text content of a local file (.pdf, .docx, .txt) in the workspace.',
     inputSchema: z.object({
@@ -218,10 +141,12 @@ export class RecruiterTools {
     })
   })
   async readLocalFile(input: any, ctx: ExecutionContext) {
-    const fullPath = path.resolve(process.cwd(), input.file_path);
-    // Security check: ensure it is inside the workspace
-    if (!fullPath.startsWith(process.cwd())) {
-      throw new Error("Access denied: File must be inside the workspace.");
+    let fullPath = path.resolve(process.cwd(), input.file_path);
+    if (!fs.existsSync(fullPath)) {
+      fullPath = path.resolve(process.cwd(), '..', input.file_path);
+    }
+    if (!fs.existsSync(fullPath)) {
+      fullPath = path.resolve(input.file_path);
     }
     if (!fs.existsSync(fullPath)) {
       throw new Error(`File not found: ${input.file_path}`);
@@ -242,71 +167,5 @@ export class RecruiterTools {
     }
 
     return { content };
-  }
-
-  @Tool({
-    name: 'read_candidates_csv',
-    description: 'Read a Google Forms CSV export containing candidates (candidate_id, github_username, portfolio_url, resume_path) and automatically extract all resume texts.',
-    inputSchema: z.object({
-      csv_path: z.string().describe('Relative path to the CSV file (e.g. sample_inputs/candidates.csv)')
-    })
-  })
-  async readCandidatesCsv(input: any, ctx: ExecutionContext) {
-    const fullPath = path.resolve(process.cwd(), input.csv_path);
-    if (!fs.existsSync(fullPath)) {
-      throw new Error(`CSV file not found at: ${input.csv_path}`);
-    }
-
-    const fileContent = fs.readFileSync(fullPath, 'utf8');
-    const lines = fileContent.split(/\r?\n/).filter(line => line.trim().length > 0);
-    if (lines.length <= 1) {
-      return { candidates: [] };
-    }
-
-    const candidates = [];
-
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(',').map(c => c.trim());
-      if (cols.length < 4) continue;
-
-      const candId = cols[0];
-      const ghUser = cols[1];
-      const portfolioUrl = cols[2];
-      const resumePath = cols[3];
-
-      let resumeText = '';
-      try {
-        let fullResumePath = path.resolve(process.cwd(), resumePath);
-        if (!fs.existsSync(fullResumePath)) {
-          fullResumePath = path.resolve(process.cwd(), '..', resumePath);
-        }
-        if (fs.existsSync(fullResumePath)) {
-          const ext = path.extname(fullResumePath).toLowerCase();
-          if (ext === '.pdf') {
-            const buffer = fs.readFileSync(fullResumePath);
-            resumeText = await parsePdfText(buffer);
-          } else if (ext === '.docx') {
-            const buffer = fs.readFileSync(fullResumePath);
-            const docxData = await mammoth.extractRawText({ buffer });
-            resumeText = docxData.value;
-          } else {
-            resumeText = fs.readFileSync(fullResumePath, 'utf8');
-          }
-        } else {
-          ctx.logger.warn(`Resume file not found at ${resumePath} or ${fullResumePath}`);
-        }
-      } catch (err: any) {
-        ctx.logger.error(`Error reading resume file ${resumePath}: ${err.message}`);
-      }
-
-      candidates.push({
-        candidate_id: candId,
-        github_username: ghUser,
-        portfolio_url: portfolioUrl,
-        resume_text: resumeText
-      });
-    }
-
-    return { candidates };
   }
 }
