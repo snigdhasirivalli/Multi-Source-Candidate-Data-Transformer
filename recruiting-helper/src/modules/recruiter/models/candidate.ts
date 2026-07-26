@@ -22,6 +22,13 @@ export interface ProjectRecord {
   url?: string;
   technologies?: string[];
 }
+export interface PublicationRecord {
+  title: string;
+  publisher?: string;
+  url?: string;
+  date?: string;
+  description?: string;
+}
 
 export interface CandidateProfile {
   id: string;
@@ -34,6 +41,7 @@ export interface CandidateProfile {
   links: string[];
   experience: ExperienceRecord[];
   projects: ProjectRecord[];
+  publications: PublicationRecord[];
   provenance: ProvenanceRecord[];
   conflicts: any[];
 }
@@ -50,4 +58,5 @@ export interface RawCandidateData {
   links?: string[];
   experience?: ExperienceRecord[];
   projects?: ProjectRecord[];
+  publications?: PublicationRecord[];
 }

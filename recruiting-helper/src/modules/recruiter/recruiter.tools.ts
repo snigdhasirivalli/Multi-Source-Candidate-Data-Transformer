@@ -38,6 +38,13 @@ export class RecruiterTools {
           description: z.string().optional(),
           url: z.string().optional(),
           technologies: z.array(z.string()).optional()
+        })).optional(),
+        publications: z.array(z.object({
+          title: z.string(),
+          publisher: z.string().optional(),
+          url: z.string().optional(),
+          date: z.string().optional(),
+          description: z.string().optional()
         })).optional()
       }).optional().describe('Structured candidate data extracted directly from the attached resume in your chat context.')
     })

@@ -83,6 +83,7 @@ export class ResumeService {
         links,
         experience: data.experience || [],
         projects: data.projects || [],
+        publications: data.publications || [],
         bio
       };
     } catch (error: any) {

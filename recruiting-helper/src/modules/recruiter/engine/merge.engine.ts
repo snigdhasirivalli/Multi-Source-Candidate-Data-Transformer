@@ -1,4 +1,4 @@
-import { CandidateProfile, RawCandidateData, ExperienceRecord, ProjectRecord } from '../models/candidate.js';
+import { CandidateProfile, RawCandidateData, ExperienceRecord, ProjectRecord, PublicationRecord } from '../models/candidate.js';
 
 export class MergeEngine {
   // Source Tier Confidence Weights:
@@ -24,6 +24,7 @@ export class MergeEngine {
       links: [],
       experience: [],
       projects: [],
+      publications: [],
       bio_narratives: [],
       provenance: [],
       conflicts: []
@@ -131,6 +132,7 @@ export class MergeEngine {
     const linksSet = new Set<string>();
     const experienceList: ExperienceRecord[] = [];
     const rawProjectsList: ProjectRecord[] = [];
+    const rawPublicationsList: PublicationRecord[] = [];
 
     for (const r of records) {
       // 1. Collect skills
@@ -156,6 +158,13 @@ export class MergeEngine {
       if (r.links) {
         r.links.forEach(l => {
           if (l && l.trim()) linksSet.add(l.trim());
+        });
+      }
+
+      // 5. Collect publications
+      if (r.publications) {
+        r.publications.forEach(pub => {
+          if (pub && pub.title && pub.title.trim()) rawPublicationsList.push({ ...pub });
         });
       }
     }
@@ -209,9 +218,35 @@ export class MergeEngine {
       }
     }
 
+    // Merge and deduplicate publications by normalized title
+    const mergedPublications: PublicationRecord[] = [];
+    for (const pub of rawPublicationsList) {
+      const pubTitle = pub.title.trim();
+      const pubSlug = pubTitle.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const existing = mergedPublications.find(m => m.title.toLowerCase().replace(/[^a-z0-9]/g, '') === pubSlug);
+
+      if (!existing) {
+        mergedPublications.push({
+          title: pubTitle,
+          publisher: pub.publisher ? pub.publisher.trim() : undefined,
+          url: pub.url ? pub.url.trim() : undefined,
+          date: pub.date ? pub.date.trim() : undefined,
+          description: pub.description ? pub.description.trim() : undefined
+        });
+      } else {
+        if (pub.url && !existing.url) existing.url = pub.url.trim();
+        if (pub.publisher && !existing.publisher) existing.publisher = pub.publisher.trim();
+        if (pub.date && !existing.date) existing.date = pub.date.trim();
+        if (pub.description && pub.description.trim().length > (existing.description || '').length) {
+          existing.description = pub.description.trim();
+        }
+      }
+    }
+
     profile.skills = Array.from(skillsSet);
     profile.links = Array.from(linksSet);
     profile.experience = experienceList;
     profile.projects = mergedProjects;
+    profile.publications = mergedPublications;
   }
 }
