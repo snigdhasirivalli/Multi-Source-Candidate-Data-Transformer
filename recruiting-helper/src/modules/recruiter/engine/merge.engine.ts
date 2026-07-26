@@ -1,6 +1,11 @@
-import { CandidateProfile, RawCandidateData, ProvenanceRecord } from '../models/candidate.js';
+import { CandidateProfile, RawCandidateData, ExperienceRecord, ProjectRecord } from '../models/candidate.js';
 
 export class MergeEngine {
+  // Source Tier Confidence Weights:
+  // Tier A: Resume (0.95) - Highest Authority
+  // Tier B: GitHub (0.70)
+  // Tier C: Portfolio (0.50)
+  // Tier D: Unverified / Third-party (0.30)
   private readonly tierConfidence = {
     'A': 0.95,
     'B': 0.70,
@@ -9,7 +14,8 @@ export class MergeEngine {
   };
 
   /**
-   * Merges multiple raw candidate records into a single resolved profile
+   * Aggregates raw candidate records from multiple sources (Resume, Portfolio, GitHub)
+   * into a unified candidate payload and detects data conflicts across sources.
    */
   merge(records: RawCandidateData[], candidateId: string): CandidateProfile {
     const profile: CandidateProfile = {
@@ -25,23 +31,23 @@ export class MergeEngine {
 
     if (!records || records.length === 0) return profile;
 
-    // Filter valid records
     const validRecords = records.filter(r => r !== null);
 
+    // Resolve primary contact & identity scalar fields based on source tier priority
     profile.name = this.resolveField('name', validRecords, profile);
     profile.email = this.resolveField('email', validRecords, profile);
     profile.phone = this.resolveField('phone', validRecords, profile);
     profile.location = this.resolveField('location', validRecords, profile);
 
-    // Merge bios into bio_narratives
+    // Collect all bio narratives
     for (const r of validRecords) {
       if (r.bio && r.bio.trim().length > 0) {
         profile.bio_narratives.push(r.bio.trim());
       }
     }
 
-    // Merge array fields
-    this.mergeArrayFields(validRecords, profile);
+    // Aggregate array fields from all sources cleanly
+    this.aggregateArrayFields(validRecords, profile);
 
     return profile;
   }
@@ -49,50 +55,60 @@ export class MergeEngine {
   private getNormalizedValue(field: string, val: string): string {
     const clean = val.toLowerCase().trim();
     if (field === 'phone') {
-      // Remove all non-digits and keep last 10 digits (e.g. +91 74185-97139 -> 7418597139)
       const digits = clean.replace(/[^\d]/g, '');
       return digits.slice(-10);
-    }
-    if (field === 'name') {
-      // Remove spaces, dots, hyphens (e.g. M-Chandana -> mchandana)
-      return clean.replace(/[\s.-]/g, '');
     }
     return clean;
   }
 
   private resolveField(field: keyof RawCandidateData, records: RawCandidateData[], profile: CandidateProfile): string | undefined {
-    // Collect all candidates' values for this field
     const candidatesValues: Array<{ value: string, record: RawCandidateData }> = [];
-    
+
     for (const r of records) {
       if (r[field] && typeof r[field] === 'string') {
-        candidatesValues.push({ value: r[field] as string, record: r });
+        const val = (r[field] as string).trim();
+        if (val.length > 0) {
+          candidatesValues.push({ value: val, record: r });
+        }
       }
     }
 
     if (candidatesValues.length === 0) return undefined;
 
-    // Sort values by tier priority (A > B > C > D)
+    // Sort by evidence tier confidence (Tier A Resume > Tier B GitHub > Tier C Portfolio)
     candidatesValues.sort((a, b) => {
-      const confA = this.tierConfidence[a.record.tier];
-      const confB = this.tierConfidence[b.record.tier];
-      return confB - confA; // descending
+      const confA = this.tierConfidence[a.record.tier] || 0.5;
+      const confB = this.tierConfidence[b.record.tier] || 0.5;
+      return confB - confA;
     });
 
     const winner = candidatesValues[0];
-    
-    // Check for conflicts using normalized values
-    const normalizedValues = new Set(candidatesValues.map(c => this.getNormalizedValue(field, c.value)));
-    let finalConfidence = this.tierConfidence[winner.record.tier];
 
-    if (normalizedValues.size > 1) {
+    // Detect conflicts across different data sources
+    const normalizedMap = new Map<string, Array<{ value: string; source: string; tier: string }>>();
+    for (const item of candidatesValues) {
+      const norm = this.getNormalizedValue(field, item.value);
+      if (!normalizedMap.has(norm)) {
+        normalizedMap.set(norm, []);
+      }
+      normalizedMap.get(norm)!.push({ value: item.value, source: item.record.source, tier: item.record.tier });
+    }
+
+    // If more than 1 distinct value exists for this field, record a conflict!
+    if (normalizedMap.size > 1) {
+      const allValuesStr = candidatesValues.map(c => `'${c.value}' from ${c.record.source} (Tier ${c.record.tier})`).join(', ');
       profile.conflicts.push({
         field,
-        values: Array.from(new Set(candidatesValues.map(c => c.value.trim()))),
-        message: `Conflict detected across sources for ${field}`
+        selected_value: winner.value,
+        primary_source: winner.record.source,
+        primary_tier: winner.record.tier,
+        all_detected_values: candidatesValues.map(c => ({
+          value: c.value,
+          source: c.record.source,
+          tier: c.record.tier
+        })),
+        message: `Conflict detected for '${field}': Found ${normalizedMap.size} conflicting values: [${allValuesStr}]. Selected '${winner.value}' from ${winner.record.source} due to higher tier priority (Tier ${winner.record.tier}).`
       });
-      // Apply penalty
-      finalConfidence = Math.max(0, finalConfidence - 0.2);
     }
 
     // Record provenance
@@ -100,123 +116,102 @@ export class MergeEngine {
       source: winner.record.source,
       field,
       rawValue: winner.value,
-      normalizedValue: winner.value,
+      normalizedValue: winner.value.trim(),
       evidenceTier: winner.record.tier,
-      confidence: finalConfidence,
+      confidence: this.tierConfidence[winner.record.tier] || 0.5,
       action: 'merged',
-      reason: normalizedValues.size > 1 ? `Won tie-breaker by evidence tier (Tier ${winner.record.tier}). Penalized for conflicts.` : 'Single or agreed value.'
+      reason: `Primary value selected from Tier ${winner.record.tier} (${winner.record.source})`
     });
 
-    return winner.value;
+    return winner.value.trim();
   }
 
-  private getLinkHandle(url: string): { type: string; handle: string } | null {
-    const cleanUrl = url.toLowerCase().trim();
-    // Match linkedin.com/in/username
-    if (cleanUrl.includes('linkedin.com/in/')) {
-      const match = cleanUrl.match(/linkedin\.com\/in\/([a-z0-9-_%]+)/);
-      if (match) return { type: 'linkedin', handle: match[1] };
-    }
-    // Match github.com/username
-    if (cleanUrl.includes('github.com/')) {
-      const match = cleanUrl.match(/github\.com\/([a-z0-9-_%]+)/);
-      if (match) return { type: 'github', handle: match[1] };
-    }
-    return null;
-  }
-
-  private mergeArrayFields(records: RawCandidateData[], profile: CandidateProfile) {
-    const allSkills = new Set<string>();
-    const allExperience = [];
-    const allProjects = new Map<string, any>(); // Map to deduplicate projects by name
-
-    const finalLinks: string[] = [];
-    const linkedinHandles = new Map<string, { url: string; tier: string }>();
-    const githubHandles = new Map<string, { url: string; tier: string }>();
-    const otherLinks = new Set<string>();
+  private aggregateArrayFields(records: RawCandidateData[], profile: CandidateProfile) {
+    const skillsSet = new Set<string>();
+    const linksSet = new Set<string>();
+    const experienceList: ExperienceRecord[] = [];
+    const rawProjectsList: ProjectRecord[] = [];
 
     for (const r of records) {
+      // 1. Collect skills
       if (r.skills) {
-        r.skills.forEach(s => allSkills.add(s));
-      }
-      if (r.experience) {
-        allExperience.push(...r.experience);
-      }
-      if (r.projects) {
-        r.projects.forEach(p => {
-          const key = p.name.toLowerCase().trim();
-          if (!allProjects.has(key)) {
-            allProjects.set(key, p);
-          } else {
-            // Merge technologies if they exist
-            const existing = allProjects.get(key);
-            if (p.technologies) {
-              existing.technologies = Array.from(new Set([...(existing.technologies || []), ...p.technologies]));
-            }
-          }
+        r.skills.forEach(s => {
+          if (s && s.trim()) skillsSet.add(s.trim());
         });
       }
+
+      // 2. Collect experience
+      if (r.experience) {
+        r.experience.forEach(exp => experienceList.push({ ...exp }));
+      }
+
+      // 3. Collect projects
+      if (r.projects) {
+        r.projects.forEach(p => {
+          if (p && p.name && p.name.trim()) rawProjectsList.push({ ...p });
+        });
+      }
+
+      // 4. Collect links
       if (r.links) {
-        for (const url of r.links) {
-          const cleanUrl = url.trim().replace(/\/$/, ''); // strip trailing slash
-          // Standardize protocol to https
-          const stdUrl = cleanUrl.replace(/^http:\/\//i, 'https://');
-          
-          const handleInfo = this.getLinkHandle(stdUrl);
-          if (handleInfo) {
-            if (handleInfo.type === 'linkedin') {
-              if (!linkedinHandles.has(handleInfo.handle)) {
-                linkedinHandles.set(handleInfo.handle, { url: stdUrl, tier: r.tier });
-              }
-            } else if (handleInfo.type === 'github') {
-              if (!githubHandles.has(handleInfo.handle)) {
-                githubHandles.set(handleInfo.handle, { url: stdUrl, tier: r.tier });
-              }
-            }
-          } else {
-            otherLinks.add(stdUrl);
-          }
+        r.links.forEach(l => {
+          if (l && l.trim()) linksSet.add(l.trim());
+        });
+      }
+    }
+
+    // Merge projects intelligently to preserve direct live GitHub repository URLs
+    const mergedProjects: ProjectRecord[] = [];
+
+    for (const proj of rawProjectsList) {
+      const projCleanName = proj.name.trim();
+      const projSlug = projCleanName.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      // Find matching project by exact URL or slug overlap
+      const existing = mergedProjects.find(m => {
+        if (m.url && proj.url && m.url.toLowerCase().trim().replace(/\/$/, '') === proj.url.toLowerCase().trim().replace(/\/$/, '')) {
+          return true;
+        }
+        const mSlug = m.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (mSlug === projSlug) return true;
+        if (mSlug.length >= 4 && projSlug.length >= 4 && (mSlug.includes(projSlug) || projSlug.includes(mSlug))) {
+          return true;
+        }
+        return false;
+      });
+
+      if (!existing) {
+        mergedProjects.push({
+          name: projCleanName,
+          description: proj.description ? proj.description.trim() : '',
+          url: proj.url ? proj.url.trim() : undefined,
+          technologies: proj.technologies ? Array.from(new Set(proj.technologies.map(t => t.trim()))) : []
+        });
+      } else {
+        // Merge project properties:
+        // 1. Keep direct live working URL if available
+        if (proj.url && !existing.url) {
+          existing.url = proj.url.trim();
+        }
+        // 2. Prefer human-readable title over repo_slug_name
+        if (projCleanName.length > existing.name.length && !projCleanName.includes('_') && !projCleanName.includes('-')) {
+          existing.name = projCleanName;
+        }
+        // 3. Keep richer description
+        if (proj.description && proj.description.trim().length > (existing.description || '').length) {
+          existing.description = proj.description.trim();
+        }
+        // 4. Combine technologies
+        if (proj.technologies && proj.technologies.length > 0) {
+          const techs = new Set([...(existing.technologies || []), ...proj.technologies.map(t => t.trim())]);
+          existing.technologies = Array.from(techs);
         }
       }
     }
 
-    // Check for conflicts in LinkedIn profiles
-    if (linkedinHandles.size > 1) {
-      profile.conflicts.push({
-        field: 'linkedin',
-        values: Array.from(linkedinHandles.values()).map(h => h.url),
-        message: `Conflict detected: Multiple different LinkedIn handles found across sources (${Array.from(linkedinHandles.keys()).join(', ')})`
-      });
-    }
-
-    // Check for conflicts in GitHub profiles
-    if (githubHandles.size > 1) {
-      profile.conflicts.push({
-        field: 'github',
-        values: Array.from(githubHandles.values()).map(h => h.url),
-        message: `Conflict detected: Multiple different GitHub handles found across sources (${Array.from(githubHandles.keys()).join(', ')})`
-      });
-    }
-
-    // Prioritize and add handles based on tier
-    const sortAndSelectWinner = (handlesMap: Map<string, { url: string; tier: string }>) => {
-      const sorted = Array.from(handlesMap.values()).sort((a, b) => {
-        const confA = this.tierConfidence[a.tier as keyof typeof this.tierConfidence] || 0.3;
-        const confB = this.tierConfidence[b.tier as keyof typeof this.tierConfidence] || 0.3;
-        return confB - confA; // descending tier confidence
-      });
-      // Push winner first, then remaining so no data is lost but the primary is first
-      sorted.forEach(item => finalLinks.push(item.url));
-    };
-
-    sortAndSelectWinner(linkedinHandles);
-    sortAndSelectWinner(githubHandles);
-
-    otherLinks.forEach(l => finalLinks.push(l));
-
-    profile.skills = Array.from(allSkills);
-    profile.links = Array.from(new Set(finalLinks));
-    profile.experience = allExperience;
-    profile.projects = Array.from(allProjects.values());
+    profile.skills = Array.from(skillsSet);
+    profile.links = Array.from(linksSet);
+    profile.experience = experienceList;
+    profile.projects = mergedProjects;
   }
 }
