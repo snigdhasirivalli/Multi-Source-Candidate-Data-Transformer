@@ -28,25 +28,25 @@ export class RecruiterTools {
         skills: z.array(z.string()).optional(),
         links: z.array(z.string()).optional().describe('URLs or links found in resume, including LinkedIn profile URL (e.g. linkedin.com/in/...), personal portfolio, or blog links.'),
         experience: z.array(z.object({
-          company: z.string(),
-          title: z.string(),
-          duration: z.string(),
-          description: z.string()
-        })).optional(),
+          company: z.string().describe('The name of the company or organization'),
+          title: z.string().describe('The job title or role name'),
+          duration: z.string().describe('The duration of the role (e.g., April 2026 - June 2026)'),
+          description: z.string().describe('Detailed description of responsibilities and achievements')
+        })).optional().describe('Extract all work experience records listed on the resume.'),
         projects: z.array(z.object({
-          name: z.string(),
-          description: z.string().optional(),
-          url: z.string().optional(),
-          technologies: z.array(z.string()).optional()
-        })).optional(),
+          name: z.string().describe('The name of the project'),
+          description: z.string().optional().describe('Detailed description of the project features, context, and architecture'),
+          url: z.string().optional().describe('Direct link to the project repository or website if available'),
+          technologies: z.array(z.string()).optional().describe('Technologies, languages, and frameworks used in the project')
+        })).optional().describe('CRITICAL: Extract and include ALL projects listed on the candidate resume. Do not leave out, combine, or truncate any projects.'),
         publications: z.array(z.object({
-          title: z.string(),
-          publisher: z.string().optional(),
-          url: z.string().optional(),
-          date: z.string().optional(),
-          description: z.string().optional()
-        })).optional()
-      }).optional().describe('Structured candidate data extracted directly from the attached resume in your chat context.')
+          title: z.string().describe('The title of the research paper or publication'),
+          publisher: z.string().optional().describe('The journal or publisher'),
+          url: z.string().optional().describe('Direct link to the paper/publication URL'),
+          date: z.string().optional().describe('Date of publication'),
+          description: z.string().optional().describe('Brief summary of the paper/publication')
+        })).optional().describe('Extract all publications or research papers listed on the resume.')
+      }).optional().describe('Structured candidate data extracted directly from the attached resume in your chat context. Make sure to populate every field completely.')
     })
   })
   async evaluateCandidate(input: any, ctx: ExecutionContext) {

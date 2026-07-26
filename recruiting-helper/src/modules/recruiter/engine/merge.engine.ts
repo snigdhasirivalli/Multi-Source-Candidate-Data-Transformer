@@ -178,8 +178,10 @@ export class MergeEngine {
 
       // Find matching project by exact URL or exact slug match
       const existing = mergedProjects.find(m => {
-        if (m.url && proj.url && m.url.toLowerCase().trim().replace(/\/$/, '') === proj.url.toLowerCase().trim().replace(/\/$/, '')) {
-          return true;
+        if (m.url && proj.url && !isProfileRootUrl(m.url) && !isProfileRootUrl(proj.url)) {
+          if (m.url.toLowerCase().trim().replace(/\/$/, '') === proj.url.toLowerCase().trim().replace(/\/$/, '')) {
+            return true;
+          }
         }
         const mSlug = m.name.toLowerCase().replace(/[^a-z0-9]/g, '');
         if (mSlug === projSlug) return true;
@@ -245,5 +247,26 @@ export class MergeEngine {
     profile.experience = experienceList;
     profile.projects = mergedProjects;
     profile.publications = mergedPublications;
+  }
+}
+
+function isProfileRootUrl(urlStr: string): boolean {
+  try {
+    const url = new URL(urlStr);
+    const hostname = url.hostname.toLowerCase();
+    
+    if (hostname.includes('github.com')) {
+      const paths = url.pathname.split('/').filter(Boolean);
+      return paths.length <= 1; // e.g. github.com/username (no repo path)
+    }
+    if (hostname.includes('linkedin.com')) {
+      return true;
+    }
+    if (url.pathname === '/' || url.pathname === '') {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
   }
 }
