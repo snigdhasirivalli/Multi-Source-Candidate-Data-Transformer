@@ -1,0 +1,10 @@
+{
+  "name": "multi-source-candidate-data-transformer-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "postinstall": "npm install --prefix recruiting-helper",
+    "build": "npm run build --prefix recruiting-helper",
+    "start": "npm run start:prod --prefix recruiting-helper"
+  }
+}
