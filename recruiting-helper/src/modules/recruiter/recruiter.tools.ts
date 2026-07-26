@@ -14,7 +14,7 @@ export class RecruiterTools {
 
   @Tool({
     name: 'evaluate_candidate',
-    description: 'Evaluate a candidate by merging live GitHub, Portfolio, and Resume data. Extract structured candidate data from the attached resume in your context and pass it into resume_extracted_data.',
+    description: 'Evaluate a candidate by merging live GitHub, Portfolio, and Resume data. Extract structured candidate data from the attached resume in your context and pass it into resume_extracted_data. CRITICAL: You must extract and include ALL experience, projects, and publications listed on the resume inside resume_extracted_data. Do not omit, combine, or truncate any entries.',
     inputSchema: z.object({
       candidate_id: z.string().describe('A unique identifier for the candidate (e.g. snigdha)'),
       github_username: z.string().optional().describe('GitHub username (optional)'),

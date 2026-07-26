@@ -176,16 +176,13 @@ export class MergeEngine {
       const projCleanName = proj.name.trim();
       const projSlug = projCleanName.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-      // Find matching project by exact URL or slug overlap
+      // Find matching project by exact URL or exact slug match
       const existing = mergedProjects.find(m => {
         if (m.url && proj.url && m.url.toLowerCase().trim().replace(/\/$/, '') === proj.url.toLowerCase().trim().replace(/\/$/, '')) {
           return true;
         }
         const mSlug = m.name.toLowerCase().replace(/[^a-z0-9]/g, '');
         if (mSlug === projSlug) return true;
-        if (mSlug.length >= 4 && projSlug.length >= 4 && (mSlug.includes(projSlug) || projSlug.includes(mSlug))) {
-          return true;
-        }
         return false;
       });
 
